@@ -65,14 +65,13 @@ func (s *Socket) Close() error {
 // Send implements transport.Socket
 func (s *Socket) Send(dest string, pkt transport.Packet, timeout time.Duration) error {
 	/* panic("to be implemented in HW0") */
-	//udpAddr, err := net.ResolveUDPAddr("udp4", dest)
-	//if err != nil {
-	//	return err
-	//}
+	// Establish UDP connection
 	conn, err := net.Dial("udp4", dest)
 	if err != nil {
 		return err
 	}
+
+	// Close connection at the end
 	defer func(conn net.Conn) {
 		err := conn.Close()
 		if err != nil {
@@ -80,10 +79,6 @@ func (s *Socket) Send(dest string, pkt transport.Packet, timeout time.Duration) 
 		}
 	}(conn)
 
-	// Regularize timeout if required
-	//if timeout <= 0 {
-	//	timeout = math.MaxInt64
-	//}
 	// Marshal packet
 	buf, err := pkt.Marshal()
 	if err != nil {
