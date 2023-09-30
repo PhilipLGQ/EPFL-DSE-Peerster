@@ -2,8 +2,8 @@ package udp
 
 import (
 	"errors"
+	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/transport"
-	"math"
 	"net"
 	"os"
 	"sync"
@@ -65,31 +65,46 @@ func (s *Socket) Close() error {
 // Send implements transport.Socket
 func (s *Socket) Send(dest string, pkt transport.Packet, timeout time.Duration) error {
 	/* panic("to be implemented in HW0") */
-	udpAddr, err := net.ResolveUDPAddr("udp4", dest)
+	//udpAddr, err := net.ResolveUDPAddr("udp4", dest)
+	//if err != nil {
+	//	return err
+	//}
+	conn, err := net.Dial("udp4", dest)
 	if err != nil {
 		return err
 	}
-	conn, err := net.DialUDP("udp4", nil, udpAddr)
-	if err != nil {
-		return err
-	}
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Info().Msg("Error when closing the connection！")
+		}
+	}(conn)
 
 	// Regularize timeout if required
-	if timeout <= 0 {
-		timeout = math.MaxInt64
-	}
-	err = conn.SetWriteDeadline(time.Now().Add(timeout))
-	if err != nil {
-		return err
-	}
-
+	//if timeout <= 0 {
+	//	timeout = math.MaxInt64
+	//}
 	// Marshal packet
 	buf, err := pkt.Marshal()
 	if err != nil {
 		return err
 	}
+
+	if timeout > 0 {
+		err := conn.SetWriteDeadline(time.Now().Add(timeout))
+		if err != nil {
+			log.Info().Msg("Timeout or send error!")
+			return err
+		}
+	}
+
 	_, errSend := conn.Write(buf)
 	if errSend != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			log.Info().Msg("Timeout send!")
+			return transport.TimeoutError(0)
+		}
+		log.Info().Msg("Send error!")
 		return errSend
 	}
 
@@ -161,7 +176,7 @@ func (pl *PktList) GetList() []transport.Packet {
 
 // AddPacket implements PktList of adding a packet to the packet list
 func (pl *PktList) AddPacket(pkt transport.Packet) {
-	pl.mu.RLock()
-	defer pl.mu.RUnlock()
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
 	pl.pkl = append(pl.pkl, pkt)
 }
