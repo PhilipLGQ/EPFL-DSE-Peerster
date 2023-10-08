@@ -74,23 +74,24 @@ func (n *node) Start() error {
 			case <-ctx.Done():
 				return
 			default:
-			}
-			// Process when no Stop() is called
-			pkt, err := n.conf.Socket.Recv(time.Millisecond * 10)
-			if errors.Is(err, transport.TimeoutError(0)) {
-				continue
-			} else if err != nil {
-				cs <- err
-			}
-			// Check if message should be permitted to register
-			n.wg.Add(1)
-			go func(cs chan error) {
-				defer n.wg.Done()
-				err := n.ProcessMessage(pkt)
-				if err != nil {
+				// Process when no Stop() is called
+				pkt, err := n.conf.Socket.Recv(time.Millisecond * 10)
+				if errors.Is(err, transport.TimeoutError(0)) {
+					continue
+				} else if err != nil {
 					cs <- err
 				}
-			}(chanError)
+
+				// Check if message should be permitted to register
+				n.wg.Add(1)
+				go func(cs chan error) {
+					defer n.wg.Done()
+					err := n.ProcessMessage(pkt)
+					if err != nil {
+						cs <- err
+					}
+				}(chanError)
+			}
 		}
 	}(n.ctx, chanError)
 
