@@ -22,7 +22,6 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	// Therefore, you are free to rename and change it as you want.
 
 	// Save node configs
-	rand.Seed(time.Now().UnixNano())
 	node := node{conf: conf}
 	// Initialization
 	node.rumorP.Initiator()
@@ -292,7 +291,7 @@ func (n *node) Start() error {
 			}
 		}
 	}(n.ctx)
-	
+
 	return nil
 }
 
