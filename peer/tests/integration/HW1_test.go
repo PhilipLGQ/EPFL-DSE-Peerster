@@ -108,8 +108,8 @@ func fetchMessages(nodes []z.TestNode, msgs [][]*types.ChatMessage, out io.Write
 		// print stats of throughput for each node
 		l.Lock()
 		fmt.Fprintf(out, "%s, %f, %f\n", node.GetAddr(),
-			float64(totReceived)/float64(time.Since(startT)),
-			float64(totSent)/float64(time.Since(startT)))
+			float64(totReceived)/float64(time.Since(startT).Seconds()),
+			float64(totSent)/float64(time.Since(startT).Seconds()))
 		l.Unlock()
 	}
 	for i, node := range nodes {
