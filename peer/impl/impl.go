@@ -106,8 +106,7 @@ func (n *node) ExecRumorsMessage(msg types.Message, pkt transport.Packet) error 
 			}
 			n.rumorP.Record(rumor, rumor.Origin, &n.tbl, pkt.Header.RelayedBy)
 		} else if n.rumorP.CheckSeqNew(rumor.Origin, rumor.Sequence) {
-			detail := DetailRumor{rumor: rumor, pkt: pkt}
-			n.rumorB.AddRumor(rumor.Origin, detail)
+			n.rumorB.AddRumor(rumor.Origin, DetailRumor{rumor: rumor, pkt: pkt})
 		}
 	}
 
@@ -177,7 +176,11 @@ func (n *node) ProcessRumors() error {
 		for _, detail := range rumorDetails {
 			if n.rumorP.Expected(origin, detail.rumor.Sequence) {
 				// Process the rumor using the stored packet
-				err := n.conf.MessageRegistry.ProcessPacket(detail.pkt)
+				pkt := transport.Packet{
+					Header: detail.pkt.Header,
+					Msg:    detail.rumor.Msg,
+				}
+				err := n.conf.MessageRegistry.ProcessPacket(pkt)
 				if err != nil {
 					return err
 				}
@@ -808,7 +811,7 @@ func (pr *ProcessorRumor) Initiator() {
 
 func (pr *ProcessorRumor) InitAddrSeq(addr string) {
 	pr.mu.Lock()
-	pr.mu.Unlock()
+	defer pr.mu.Unlock()
 	pr.rumorSeq[addr] = 0
 }
 
