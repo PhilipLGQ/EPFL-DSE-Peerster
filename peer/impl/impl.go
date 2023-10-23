@@ -164,65 +164,6 @@ func (n *node) Start() error {
 	n.startGoroutine("processing buffered rumors", n.ProcessBufferedRumors)
 	n.startGoroutine("listening and receiving", n.listenAndReceive)
 
-	// Anti-entropy mechanism
-	//n.wg.Add(1)
-	//go func() {
-	//	defer n.wg.Done()
-	//	err := n.AntiEntropy()
-	//	if err != nil {
-	//		log.Error().Msgf("Error occurred at anti-entropy mechanism: %v", err)
-	//	}
-	//}()
-
-	// Heartbeat mechanism
-	//n.wg.Add(1)
-	//go func() {
-	//	defer n.wg.Done()
-	//	err := n.Heartbeat()
-	//	if err != nil {
-	//		log.Error().Msgf("Error occurred at heartbeat mechanism: %v", err)
-	//	}
-	//}()
-
-	// Process buffered rumors
-	//n.wg.Add(1)
-	//go func() {
-	//	defer n.wg.Done()
-	//	err := n.ProcessBufferedRumors()
-	//	if err != nil {
-	//		log.Error().Msgf("Error occurred at processing buffered rumors: %v", err)
-	//	}
-	//}()
-
-	// Listen and receive
-	//n.wg.Add(1)
-	//go func(ctx context.Context) {
-	//	defer n.wg.Done()
-	//	for {
-	//		// Return if Stop() is called
-	//		select {
-	//		case <-ctx.Done():
-	//			return
-	//		default:
-	//			// Process when no Stop() is called
-	//			pkt, err := n.conf.Socket.Recv(time.Second)
-	//			if errors.Is(err, transport.TimeoutError(0)) {
-	//				continue
-	//			} else if err != nil {
-	//				log.Error().Msgf("Error occurred at receiving message: %v", err.Error())
-	//			}
-	//			// Check if message should be permitted to register
-	//			n.wg.Add(1)
-	//			go func() {
-	//				defer n.wg.Done()
-	//				err := n.ProcessMessage(pkt)
-	//				if err != nil {
-	//					log.Error().Msgf("Error occurred at processing received message: %v", err.Error())
-	//				}
-	//			}()
-	//		}
-	//	}
-	//}(n.ctx)
 	return nil
 }
 
