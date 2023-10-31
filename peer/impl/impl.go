@@ -1,14 +1,18 @@
 package impl
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/transport"
 	"go.dedis.ch/cs438/types"
 	"golang.org/x/xerrors"
-	"sort"
+	"io"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,15 +22,18 @@ import (
 func NewPeer(conf peer.Configuration) peer.Peer {
 	// here you must return a struct that implements the peer.Peer functions.
 	// Therefore, you are free to rename and change it as you want.
-
 	// Save node configs
 	node := node{conf: conf}
 	// Initialization
 	node.rumorP.Initiator()
 	node.ackSig.Initiator()
 	node.rumorB.Initiator()
+	node.catalog.Initiator()
+	node.ntf.Initiator()
 	node.tbl = ConcurrentRT{RT: make(map[string]string)}
 	node.tbl.AddEntry(node.conf.Socket.GetAddress(), node.conf.Socket.GetAddress())
+	// Create new context allowing the goroutine to know Stop() call
+	node.ctx, node.cancel = context.WithCancel(context.Background())
 	// Register message handlers of different types of messages
 	node.conf.MessageRegistry.RegisterMessageCallback(types.ChatMessage{}, node.ExecChatMessage)
 	node.conf.MessageRegistry.RegisterMessageCallback(types.RumorsMessage{}, node.ExecRumorsMessage)
@@ -34,6 +41,10 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	node.conf.MessageRegistry.RegisterMessageCallback(types.StatusMessage{}, node.ExecStatusMessage)
 	node.conf.MessageRegistry.RegisterMessageCallback(types.PrivateMessage{}, node.ExecPrivateMessage)
 	node.conf.MessageRegistry.RegisterMessageCallback(types.EmptyMessage{}, node.ExecEmptyMessage)
+	node.conf.MessageRegistry.RegisterMessageCallback(types.DataRequestMessage{}, node.ExecDataRequestMessage)
+	node.conf.MessageRegistry.RegisterMessageCallback(types.DataReplyMessage{}, node.ExecDataReplyMessage)
+	node.conf.MessageRegistry.RegisterMessageCallback(types.SearchRequestMessage{}, node.ExecSearchRequestMessage)
+	node.conf.MessageRegistry.RegisterMessageCallback(types.SearchReplyMessage{}, node.ExecSearchReplyMessage)
 	return &node
 }
 
@@ -59,123 +70,19 @@ type node struct {
 	ackSig AckSignal
 	// Buffer for rumors
 	rumorB BufferRumor
-}
-
-// ProcessBufferedRumors: periodically reprocess received non-ordered rumors stored in rumor buffer.
-func (n *node) ProcessBufferedRumors() error {
-	// n.rumorB.mu.Lock()
-	// defer n.rumorB.mu.Unlock()
-	ticker := time.NewTicker(time.Millisecond * 100)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			err := n.ProcessRumors()
-			if err != nil {
-				return err
-			}
-		case <-n.ctx.Done():
-			return nil
-		}
-	}
-}
-
-//func (n *node) ProcessRumors() error {
-//	n.rumorB.mu.Lock()
-//	defer n.rumorB.mu.Unlock()
-//	for origin, rumorDetails := range n.rumorB.buf {
-//		i := 0
-//		for _, detail := range rumorDetails {
-//			if n.rumorP.Expected(origin, detail.rumor.Sequence) {
-//				// Process the rumor using the stored packet
-//				pkt := transport.Packet{
-//					Header: detail.pkt.Header,
-//					Msg:    detail.rumor.Msg,
-//				}
-//				err := n.conf.MessageRegistry.ProcessPacket(pkt)
-//				if err != nil {
-//					return err
-//				}
-//				n.rumorP.Record(detail.rumor, origin, &n.tbl, detail.pkt.Header.RelayedBy)
-//				// Continue to next rumor in the buffer if it's processed successfully
-//				continue
-//			} else if n.rumorP.CheckSeqNew(origin, detail.rumor.Sequence) {
-//				rumorDetails[i] = detail
-//				i++
-//			}
-//		}
-//		// Keep the unprocessed rumors in the buffer
-//		n.rumorB.buf[origin] = rumorDetails[:i]
-//	}
-//	return nil
-//}
-
-func (n *node) ProcessRumors() error {
-	n.rumorB.mu.Lock()
-	defer n.rumorB.mu.Unlock()
-
-	for origin, rumorDetails := range n.rumorB.buf {
-		if err := n.processSingleRumor(origin, rumorDetails); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (n *node) processSingleRumor(origin string, rumorDetails []DetailRumor) error {
-	i := 0
-	for _, detail := range rumorDetails {
-		isProcessed, err := n.processDetail(origin, detail)
-		if err != nil {
-			return err
-		}
-		if !isProcessed {
-			rumorDetails[i] = detail
-			i++
-		}
-	}
-	n.rumorB.buf[origin] = rumorDetails[:i]
-	return nil
-}
-
-func (n *node) processDetail(origin string, detail DetailRumor) (bool, error) {
-	if n.rumorP.Expected(origin, detail.rumor.Sequence) {
-		pkt := transport.Packet{
-			Header: detail.pkt.Header,
-			Msg:    detail.rumor.Msg,
-		}
-		if err := n.conf.MessageRegistry.ProcessPacket(pkt); err != nil {
-			return false, err
-		}
-		n.rumorP.Record(detail.rumor, origin, &n.tbl, detail.pkt.Header.RelayedBy)
-		return true, nil
-	}
-	return false, nil
+	// Concurrent catalog
+	catalog ConcurrentCatalog
+	// Notification manager
+	ntf Notif
 }
 
 // Start implements peer.Service
 func (n *node) Start() error {
-	// Create new context allowing the goroutine to know Stop() call
-	n.ctx, n.cancel = context.WithCancel(context.Background())
-
 	n.startGoroutine("anti-entropy mechanism", n.AntiEntropy)
 	n.startGoroutine("heartbeat mechanism", n.Heartbeat)
 	n.startGoroutine("processing buffered rumors", n.ProcessBufferedRumors)
 	n.startGoroutine("listening and receiving", n.listenAndReceive)
-
 	return nil
-}
-
-func (n *node) startGoroutine(description string, fn func() error) {
-	n.wg.Add(1)
-	go func() {
-		defer n.wg.Done()
-		err := fn()
-		if err != nil {
-			log.Error().Msgf("Error occurred at %s: %v", description, err)
-		}
-	}()
 }
 
 // Stop implements peer.Service
@@ -184,39 +91,6 @@ func (n *node) Stop() error {
 	n.cancel()
 	// Wait for completion of all goroutines
 	n.wg.Wait()
-	return nil
-}
-
-func (n *node) listenAndReceive() error {
-	// Your existing logic for listening and receiving goes here
-	n.wg.Add(1)
-	go func(ctx context.Context) {
-		defer n.wg.Done()
-		for {
-			// Return if Stop() is called
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				// Process when no Stop() is called
-				pkt, err := n.conf.Socket.Recv(time.Second)
-				if errors.Is(err, transport.TimeoutError(0)) {
-					continue
-				} else if err != nil {
-					log.Error().Msgf("Error occurred at receiving message: %v", err.Error())
-				}
-				// Check if message should be permitted to register
-				n.wg.Add(1)
-				go func() {
-					defer n.wg.Done()
-					err := n.ProcessMessage(pkt)
-					if err != nil {
-						log.Error().Msgf("Error occurred at processing received message: %v", err.Error())
-					}
-				}()
-			}
-		}
-	}(n.ctx)
 	return nil
 }
 
@@ -242,7 +116,6 @@ func (n *node) Broadcast(msg transport.Message) error {
 	rumorMsg := types.RumorsMessage{
 		Rumors: []types.Rumor{rumor}}
 	n.rumorP.IncreaseSeqNumber()
-	// fmt.Println("IncreaseSeqNumber executed!")
 
 	// Transforms rumor message to a transport.Message
 	tMsg, err := n.conf.MessageRegistry.MarshalMessage(rumorMsg)
@@ -275,57 +148,6 @@ func (n *node) Broadcast(msg transport.Message) error {
 		}
 	}()
 	return err
-}
-
-// BroadcastRandomNeighbor implements the functions of broadcasting a rumor to a valid random neighbor
-func (n *node) BroadcastRandomNeighbor(tMsg transport.Message) error {
-	preNeighbor := ""
-	for {
-		rdmNeighbor, exist := n.tbl.RandomNeighbor([]string{preNeighbor, n.conf.Socket.GetAddress()})
-		if !exist {
-			//fmt.Println("!Exist rdmNeighbor!")
-			return nil
-		}
-		//if preNeighbor == "" { // If first time broadcasting
-		//	n.rumorP.IncreaseSeqNumber()
-		//}
-		rheader := transport.NewHeader(n.conf.Socket.GetAddress(),
-			n.conf.Socket.GetAddress(), rdmNeighbor, 0)
-		rpacket := transport.Packet{Header: &rheader, Msg: &tMsg}
-
-		// Ask for ACK
-		n.ackSig.Request(rpacket.Header.PacketID)
-		err := n.conf.Socket.Send(rdmNeighbor, rpacket, time.Second)
-		//fmt.Println("Send once!")
-		if err != nil {
-			return err
-		}
-		if n.conf.AckTimeout > 0 {
-			//fmt.Println("AckTimeout > 0!")
-			select {
-			case <-n.ctx.Done():
-				//fmt.Println("Done!")
-				return nil
-			case <-n.ackSig.Wait(rpacket.Header.PacketID): // Return if ACK received
-				//fmt.Println("Received!")
-				return nil
-			case <-time.After(n.conf.AckTimeout): // If timeout resend to another random neighbor
-				//fmt.Println("Waited!")
-				preNeighbor = rdmNeighbor
-				continue
-			}
-		} else if n.conf.AckTimeout == 0 { // If AckTimeout is 0, then always wait
-			//fmt.Println("AckTimeout = 0!")
-			select {
-			case <-n.ctx.Done():
-				return nil
-			case <-n.ackSig.Wait(rpacket.Header.PacketID):
-				return nil
-			}
-		} else { // If AckTimeout is < 0, then error occurs
-			return xerrors.Errorf("AckTimeout interval cannot be less than 0!")
-		}
-	}
 }
 
 // AddPeer implements peer.Service
@@ -403,104 +225,6 @@ func (n *node) AntiEntropy() error {
 	}
 }
 
-// SendNodeView implements the function of sending a node's view to a determined/random-picked neighbor.
-func (n *node) SendNodeView(dest string, exception []string) error {
-	sendNeighbor := dest
-	exist := false
-	if sendNeighbor == "" { // If no provided destination, pick a random neighbor excluding the exceptions
-		sendNeighbor, exist = n.tbl.RandomNeighbor(append(exception, n.conf.Socket.GetAddress()))
-		if !exist { // If no neighbor simply return
-			return nil
-		}
-	}
-	sMsg := types.StatusMessage(n.rumorP.GetNodeView())
-	tMsg, err := n.conf.MessageRegistry.MarshalMessage(&sMsg)
-	if err != nil {
-		return err
-	}
-	header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(), sendNeighbor, 0)
-	packet := transport.Packet{Header: &header, Msg: &tMsg}
-	return n.conf.Socket.Send(sendNeighbor, packet, time.Second)
-}
-
-// SendMissingRumors implements the functions of sending remote missing rumors to the remote peer
-func (n *node) SendMissingRumors(dest string, msg types.StatusMessage, compDiff map[string]uint) error {
-	var remoteMissingRumors []types.Rumor
-
-	// Fetch remote missing rumors
-	for addr, seq := range compDiff {
-		rumors := n.rumorP.GetAddrRumor(addr)
-		// Iterate over each rumor and check if it is missing in the remote peer
-		for _, rumor := range rumors {
-			if rumor.Sequence > seq {
-				remoteMissingRumors = append(remoteMissingRumors, rumor)
-			}
-		}
-	}
-	// Sort them with increasing sequence number
-	sort.Slice(remoteMissingRumors, func(i, j int) bool {
-		return remoteMissingRumors[i].Sequence < remoteMissingRumors[j].Sequence
-	})
-	// Send missing rumors to the remote peer
-	rumorsMsg := types.RumorsMessage{Rumors: remoteMissingRumors}
-	tMsg, err := n.conf.MessageRegistry.MarshalMessage(rumorsMsg)
-	if err != nil {
-		return err
-	}
-	header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(), dest, 0)
-	packet := transport.Packet{Header: &header, Msg: &tMsg}
-	n.ackSig.Request(packet.Header.PacketID)
-	return n.conf.Socket.Send(dest, packet, time.Second)
-}
-
-// IdenticalView implements the function of checking if 2 views are identical
-func (n *node) IdenticalView(v1, v2 types.StatusMessage) bool {
-	if len(v1) != len(v2) { // v1 and v2 are not of the same size
-		return false
-	}
-	for addr, v1seq := range v1 {
-		if v2seq, exist := v2[addr]; !exist || v1seq != v2seq { // if addr in v1 doesn't exist in v2 or seq not match
-			return false
-		}
-	}
-	return true
-}
-
-// CheckViewDiff implements the view difference check and return the difference
-func (n *node) CheckViewDiff(local, remote types.StatusMessage) (int, map[string]uint) {
-	localMissing := false
-	remoteMissing := false
-	remoteDiff := make(map[string]uint)
-
-	// Check if local node is missing rumors
-	for rAddr, rSeq := range remote {
-		if lSeq, exist := local[rAddr]; !exist || lSeq < rSeq {
-			localMissing = true
-			break
-		}
-	}
-	// Check if remote node is missing rumors
-	for lAddr, lSeq := range local {
-		if rSeq, exist := remote[lAddr]; !exist || rSeq < lSeq {
-			remoteMissing = true
-			if exist {
-				remoteDiff[lAddr] = rSeq
-			} else {
-				remoteDiff[lAddr] = 0
-			}
-		}
-	}
-	if localMissing && remoteMissing {
-		return 3, remoteDiff
-	} else if localMissing {
-		return 1, nil
-	} else if remoteMissing {
-		return 2, remoteDiff
-	} else {
-		return 4, nil
-	}
-}
-
 // Heartbeat implements the heartbeat mechanism
 func (n *node) Heartbeat() error {
 	// Heartbeat mechanism not activated when interval = 0
@@ -532,4 +256,195 @@ func (n *node) Heartbeat() error {
 			}
 		}
 	}
+}
+
+// Upload implements peer.DataSharing
+func (n *node) Upload(data io.Reader) (metahash string, err error) {
+	dataContent, err := io.ReadAll(data)
+	if err != nil {
+		return "", err
+	}
+
+	dataLength := uint(len(dataContent))
+	currLength := uint(0)
+	dataPtr := uint(0)
+
+	dataStorage := n.conf.Storage.GetDataBlobStore()
+	// metaKeyBuffer := bytes.Buffer{}
+	metaValueBuffer := bytes.Buffer{}
+
+	for dataLength > 0 {
+		if dataLength < n.conf.ChunkSize {
+			currLength = dataLength
+			dataLength = 0
+		} else {
+			dataLength -= n.conf.ChunkSize
+			currLength = n.conf.ChunkSize
+		}
+
+		chunk := make([]byte, currLength)
+		copy(chunk, dataContent[dataPtr:dataPtr+currLength])
+		dataPtr += currLength
+
+		chunkSHA := SHA256(chunk)
+		//_, err = metaKeyBuffer.Write(chunkSHA)
+		//if err != nil {
+		//	return "", err
+		//}
+		chunkSHAstr := hex.EncodeToString(chunkSHA)
+		_, err = metaValueBuffer.WriteString(chunkSHAstr)
+		if err != nil {
+			return "", err
+		}
+		if dataLength > 0 {
+			_, err := metaValueBuffer.WriteString(peer.MetafileSep)
+			if err != nil {
+				return "", err
+			}
+		}
+		dataStorage.Set(chunkSHAstr, chunk)
+	}
+	metahash = hex.EncodeToString(SHA256(metaValueBuffer.Bytes()))
+	dataStorage.Set(metahash, metaValueBuffer.Bytes())
+	return metahash, nil
+}
+
+// Download implements peer.DataSharing
+func (n *node) Download(metahash string) ([]byte, error) {
+	var chunksDownload []byte
+	metafile, err := n.DownloadSequential(metahash)
+	if err != nil {
+		return nil, err
+	}
+	chunks := strings.Split(string(metafile), peer.MetafileSep)
+	for _, chunk := range chunks {
+		chunkVal, err := n.DownloadSequential(chunk)
+		if err != nil {
+			return nil, err
+		}
+		chunksDownload = append(chunksDownload, chunkVal...)
+	}
+	return chunksDownload, nil
+}
+
+// Tag implements peer.DataSharing
+func (n *node) Tag(name string, mh string) error {
+	ns := n.conf.Storage.GetNamingStore()
+	ns.Set(name, []byte(mh))
+	return nil
+}
+
+// Resolve implements peer.DataSharing
+func (n *node) Resolve(name string) (metahash string) {
+	ns := n.conf.Storage.GetNamingStore()
+	metahash = string(ns.Get(name))
+	return metahash
+}
+
+// GetCatalog implements peer.DataSharing
+func (n *node) GetCatalog() peer.Catalog {
+	return n.catalog.GetCatalog()
+}
+
+// UpdateCatalog implements peer.DataSharing
+func (n *node) UpdateCatalog(key string, peer string) {
+	n.catalog.UpdateCatalog(key, peer)
+}
+
+// SearchAll implements peer.DataSharing
+func (n *node) SearchAll(reg regexp.Regexp, budget uint, timeout time.Duration) (names []string, err error) {
+	names = []string{}
+	// If budget is given as equal to 0, we raise budget error
+	if budget < 1 {
+		return nil, xerrors.Errorf("Initial budget config should be > 0!")
+	}
+	// Search in local naming store
+	localMatch := n.SearchLocal(reg, true)
+	for _, file := range localMatch {
+		names = append(names, file.Name)
+	}
+	// Send request to neighbors base on budget
+	srMsg := types.SearchRequestMessage{
+		Origin:  n.conf.Socket.GetAddress(),
+		Pattern: reg.String(),
+	}
+	//fmt.Println("Executed neighbor search!")
+	rIDs, err := n.SearchNeighbor(srMsg, budget, []string{n.conf.Socket.GetAddress()}, true)
+	if err != nil {
+		return nil, err
+	}
+	// Wait and gather
+	select {
+	case <-n.ctx.Done():
+		return nil, nil
+	case <-time.After(timeout):
+		//fmt.Println("Timeout once!")
+	}
+	for _, rID := range rIDs {
+		closedChan := false
+		for !closedChan {
+			select {
+			case val := <-n.ntf.SearchWaitNotif(rID):
+				for _, f := range val {
+					names = append(names, f.Name)
+				}
+			default:
+				n.ntf.SearchSignalNotif(rID)
+				closedChan = true
+			}
+		}
+	}
+	names = removeDupValues(names)
+	return names, nil
+}
+
+// SearchFirst implements peer.DataSharing
+func (n *node) SearchFirst(pattern regexp.Regexp, conf peer.ExpandingRing) (name string, err error) {
+	// Search in local naming store
+	localMatch := n.SearchLocal(pattern, false)
+	localFull := n.CheckFirstFullMatch(localMatch)
+	if localFull != "" {
+		return localFull, nil
+	}
+	// If no local full match found, forward to neighbors and regulate by expand-ring
+	if conf.Initial < 1 {
+		return "", xerrors.Errorf("Initial budget config should be > 0!")
+	}
+	countRetry := uint(0)
+	budget := conf.Initial
+	for countRetry < conf.Retry {
+		// Create search request message
+		srMsg := types.SearchRequestMessage{Origin: n.conf.Socket.GetAddress(), Pattern: pattern.String()}
+		rIDs, err := n.SearchNeighbor(srMsg, budget, []string{n.conf.Socket.GetAddress()}, true)
+		if err != nil {
+			return "", err
+		}
+
+		// Concurrently and actively search for full match before timeout
+		fullMatchFound := make(chan string, 1)
+		ctx, cancel := context.WithTimeout(context.Background(), conf.Timeout)
+		n.wg.Add(1)
+		go n.checkActiveFullMatch(cancel, rIDs, fullMatchFound)
+
+		// Wait and gather
+		select {
+		case <-n.ctx.Done():
+			return "", nil
+		case <-ctx.Done(): // If no active first full match found, we check thoroughly to ensure there's no missed full match
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				// Check if neighbor search finally gets a full match file after timeout
+				neighborFull := n.CheckFinalFullMatch(rIDs)
+				if neighborFull != "" {
+					return neighborFull, nil
+				}
+				break // Retry if eventually no full match found
+			}
+		case neighborFull := <-fullMatchFound: // If we actively find out a full match, return it
+			return neighborFull, nil
+		}
+		// Retry mechanism
+		budget *= conf.Factor
+		countRetry++
+	}
+	return "", nil
 }

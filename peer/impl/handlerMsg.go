@@ -6,6 +6,7 @@ import (
 	"go.dedis.ch/cs438/types"
 	"golang.org/x/xerrors"
 	"math/rand"
+	"regexp"
 	"time"
 )
 
@@ -189,6 +190,124 @@ func (n *node) ExecPrivateMessage(msg types.Message, pkt transport.Packet) error
 	if _, exist := pMsg.Recipients[n.conf.Socket.GetAddress()]; exist {
 		packet := transport.Packet{Header: pkt.Header, Msg: pMsg.Msg}
 		return n.conf.MessageRegistry.ProcessPacket(packet)
+	}
+	return nil
+}
+
+// ExecDataRequestMessage: the DataRequestMessage handler.
+func (n *node) ExecDataRequestMessage(msg types.Message, pkt transport.Packet) error {
+	// Cast the message to its actual type
+	drMsg, ok := msg.(*types.DataRequestMessage)
+	if !ok {
+		return xerrors.Errorf("wrong type: %T", drMsg)
+	}
+	// Check if duplicated data requests received earlier
+	if !n.ntf.AddIfNotExists(drMsg.RequestID) {
+		return nil
+	}
+	// Send response
+	header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(),
+		pkt.Header.Source, 0)
+	nHop, exist := n.tbl.Check(pkt.Header.RelayedBy)
+	if !exist {
+		return xerrors.Errorf("Destination address is unknown!")
+	}
+	replyMsg := types.DataReplyMessage{
+		RequestID: drMsg.RequestID,
+		Key:       drMsg.Key,
+		Value:     n.conf.Storage.GetDataBlobStore().Get(drMsg.Key),
+	}
+	tMsg, err := n.conf.MessageRegistry.MarshalMessage(replyMsg)
+	if err != nil {
+		return err
+	}
+	packet := transport.Packet{
+		Header: &header,
+		Msg:    &tMsg,
+	}
+	err = n.conf.Socket.Send(nHop, packet, time.Second)
+	if err != nil {
+		return err
+	}
+	// Mark ongoing complete
+	// n.ntf.RemoveRequest(drMsg.RequestID)
+	return nil
+}
+
+// ExecDataReplyMessage: the DataReplyMessage handler.
+func (n *node) ExecDataReplyMessage(msg types.Message, pkt transport.Packet) error {
+	// Cast the message to its actual type
+	drMsg, ok := msg.(*types.DataReplyMessage)
+	if !ok {
+		return xerrors.Errorf("wrong type: %T", drMsg)
+	}
+	n.ntf.DataSignalNotif(drMsg.RequestID, drMsg.Value)
+	return nil
+}
+
+// ExecSearchRequestMessage: the SearchRequestMessage handler.
+func (n *node) ExecSearchRequestMessage(msg types.Message, pkt transport.Packet) error {
+	// Cast the message to its actual type
+	srMsg, ok := msg.(*types.SearchRequestMessage)
+	if !ok {
+		return xerrors.Errorf("wrong type: %T", srMsg)
+	}
+	reg, err := regexp.Compile(srMsg.Pattern)
+	if err != nil {
+		return err
+	}
+	// Forward search if remaining budget permits
+	if srMsg.Budget-1 > 0 {
+		_, err := n.SearchNeighbor(*srMsg, srMsg.Budget-1, []string{n.conf.Socket.GetAddress(), pkt.Header.Source}, false)
+		if err != nil {
+			return err
+		}
+	}
+	// Search locally
+	localf := n.SearchLocal(*reg, false)
+	// Send search reply back to source
+	replyMsg := types.SearchReplyMessage{
+		RequestID: srMsg.RequestID,
+		Responses: localf,
+	}
+	tMsg, err := n.conf.MessageRegistry.MarshalMessage(replyMsg)
+	if err != nil {
+		return err
+	}
+	header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(),
+		srMsg.Origin, 0)
+	packet := transport.Packet{
+		Header: &header,
+		Msg:    &tMsg,
+	}
+	err = n.conf.Socket.Send(pkt.Header.Source, packet, time.Second)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// ExecSearchReplyMessage: the SearchReplyMessage handler.
+func (n *node) ExecSearchReplyMessage(msg types.Message, pkt transport.Packet) error {
+	// Cast the message to its actual type
+	srMsg, ok := msg.(*types.SearchReplyMessage)
+	if !ok {
+		return xerrors.Errorf("wrong type: %T", srMsg)
+	}
+	// Notify a search reply message has been received
+	n.ntf.SearchSendNotif(srMsg.RequestID, srMsg.Responses)
+	// Update naming store and catalog
+	for _, file := range srMsg.Responses {
+		err := n.Tag(file.Name, file.Metahash)
+		if err != nil {
+			return err
+		}
+		n.UpdateCatalog(file.Metahash, pkt.Header.Source)
+		for _, chunk := range file.Chunks {
+			if chunk != nil {
+				n.UpdateCatalog(string(chunk), pkt.Header.Source)
+			}
+		}
 	}
 	return nil
 }
