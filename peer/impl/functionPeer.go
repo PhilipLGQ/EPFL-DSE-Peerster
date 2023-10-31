@@ -29,7 +29,8 @@ func (n *node) startGoroutine(description string, fn func() error) {
 	}()
 }
 
-// ProcessBufferedRumors implements the function of periodically reprocess received non-ordered rumors stored in rumor buffer.
+// ProcessBufferedRumors implements the function of periodically reprocess received non-ordered rumors
+// stored in rumor buffer
 func (n *node) ProcessBufferedRumors() error {
 	ticker := time.NewTicker(time.Millisecond * 100)
 	defer ticker.Stop()
@@ -59,7 +60,8 @@ func (n *node) ProcessRumors() error {
 	return nil
 }
 
-// processSingleRumor implements the function of trying to process each rumor, update the buffer with those not processed
+// processSingleRumor implements the function of trying to process each rumor, update the buffer with
+// those not processed
 func (n *node) processSingleRumor(origin string, rumorDetails []DetailRumor) error {
 	i := 0
 	for _, detail := range rumorDetails {
@@ -76,7 +78,8 @@ func (n *node) processSingleRumor(origin string, rumorDetails []DetailRumor) err
 	return nil
 }
 
-// processDetail implements the function of checking if the current rumor is expected, process locally and record it if expected
+// processDetail implements the function of checking if the current rumor is expected, process locally
+// and record it if expected
 func (n *node) processDetail(origin string, detail DetailRumor) (bool, error) {
 	if n.rumorP.Expected(origin, detail.rumor.Sequence) {
 		pkt := transport.Packet{
@@ -390,7 +393,8 @@ func (n *node) StoreMatchingChunks(fContent []byte, localStorage storage.Store,
 
 // SearchNeighbor implements the function of distributing budgets and sending search request to valid neighbors
 // and returns a list of RequestIDs if this search is started from source
-func (n *node) SearchNeighbor(srMsg types.SearchRequestMessage, budget uint, exception []string, isSrc bool) ([]string, error) {
+func (n *node) SearchNeighbor(srMsg types.SearchRequestMessage, budget uint, exception []string,
+	isSrc bool) ([]string, error) {
 	neighborValid := n.tbl.GetListNeighbor(exception)
 	neighbors := uint(len(neighborValid))
 	var rIDs []string
@@ -433,7 +437,8 @@ func (n *node) SearchNeighbor(srMsg types.SearchRequestMessage, budget uint, exc
 
 // SendSearchRequestToNeighbor implements the function of sending search request to valid neighbors
 // also trigger search request notification and collect a list of RequestIDs triggered
-func (n *node) SendSearchRequestToNeighbor(srMsg types.SearchRequestMessage, neighborValid []string, budgets []uint, isSrc bool, rID *[]string) error {
+func (n *node) SendSearchRequestToNeighbor(srMsg types.SearchRequestMessage, neighborValid []string,
+	budgets []uint, isSrc bool, rID *[]string) error {
 	for idx, budget := range budgets {
 		if isSrc {
 			srMsg.RequestID = xid.New().String()
