@@ -30,10 +30,8 @@ func (n *node) ExecRumorsMessage(msg types.Message, pkt transport.Packet) error 
 		n.rumorMu.Unlock()
 		return xerrors.Errorf("wrong type: %T", msg)
 	}
-
 	// Set flag for existence of at least 1 expected rumor
 	var rmExpected = false
-
 	// Process all rumors in the RumorsMessage
 	for _, rumor := range rMsg.Rumors {
 		if !n.rumorP.CheckAddrSeq(rumor.Origin) {
@@ -56,7 +54,6 @@ func (n *node) ExecRumorsMessage(msg types.Message, pkt transport.Packet) error 
 			n.rumorB.AddRumor(rumor.Origin, DetailRumor{rumor: rumor, pkt: pkt})
 		}
 	}
-
 	// Sends an AckMessage back to source
 	sMsg := types.StatusMessage(n.rumorP.GetNodeView())
 	ack := types.AckMessage{
@@ -72,12 +69,10 @@ func (n *node) ExecRumorsMessage(msg types.Message, pkt transport.Packet) error 
 		pkt.Header.Source, 0)
 	packet := transport.Packet{Header: &header, Msg: &tAck}
 	n.rumorMu.Unlock()
-
 	err = n.conf.Socket.Send(pkt.Header.Source, packet, time.Second)
 	if err != nil {
 		return err
 	}
-
 	// Send the RumorMessage to another random neighbor (if >= 1 expected rumor data exist)
 	if rmExpected {
 		rdmNeighbor, exist := n.tbl.RandomNeighbor([]string{n.conf.Socket.GetAddress(), pkt.Header.Source})
@@ -87,7 +82,6 @@ func (n *node) ExecRumorsMessage(msg types.Message, pkt transport.Packet) error 
 		rheader := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(),
 			rdmNeighbor, 0)
 		rpacket := transport.Packet{Header: &rheader, Msg: pkt.Msg}
-
 		// Ask for ACK
 		n.ackSig.Request(rpacket.Header.PacketID)
 		return n.conf.Socket.Send(rdmNeighbor, rpacket, time.Second)
@@ -102,17 +96,13 @@ func (n *node) ExecAckMessage(msg types.Message, pkt transport.Packet) error {
 	if !ok {
 		return xerrors.Errorf("wrong type: %T", msg)
 	}
-
 	// Stops waiting corresponds to PacketID
 	n.ackSig.Signal(ackMsg.AckedPacketID)
 	// Process the status message contained
-	// fmt.Println("ackMsg.Status.String() before Marshal:", ackMsg.Status.String())
 	tMsg, err := n.conf.MessageRegistry.MarshalMessage(ackMsg.Status)
 	if err != nil {
 		return err
 	}
-	// fmt.Println("tMsg.Payload in ExecAck:", string(tMsg.Payload))
-
 	packet := transport.Packet{Header: pkt.Header, Msg: &tMsg}
 	return n.conf.MessageRegistry.ProcessPacket(packet)
 }
@@ -124,13 +114,11 @@ func (n *node) ExecStatusMessage(msg types.Message, pkt transport.Packet) error 
 	if msg == nil {
 		return xerrors.Errorf("Message is nil")
 	}
-
 	// Cast the message to its actual type
 	sMsg, ok := msg.(*types.StatusMessage)
 	if !ok {
 		return xerrors.Errorf("wrong type: %T", msg)
 	}
-
 	// If they are identical, execute the continue-mongering mechanism
 	if n.IdenticalView(*sMsg, n.rumorP.GetNodeView()) {
 		// If views are identical, send this peer's view randomly to a neighbor
@@ -139,7 +127,6 @@ func (n *node) ExecStatusMessage(msg types.Message, pkt transport.Packet) error 
 		}
 		return nil
 	}
-
 	// If they are not identical, process as each situation required
 	compareResult, compareDiff := n.CheckViewDiff(n.rumorP.GetNodeView(), *sMsg)
 	switch compareResult {

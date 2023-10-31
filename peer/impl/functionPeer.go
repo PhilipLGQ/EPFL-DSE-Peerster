@@ -32,9 +32,8 @@ func (n *node) startGoroutine(description string, fn func() error) {
 // ProcessBufferedRumors implements the function of periodically reprocess received non-ordered rumors
 // stored in rumor buffer
 func (n *node) ProcessBufferedRumors() error {
-	ticker := time.NewTicker(time.Millisecond * 100)
+	ticker := time.NewTicker(time.Millisecond * 10)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:
