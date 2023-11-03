@@ -47,16 +47,28 @@ func (n *node) ProcessBufferedRumors() error {
 	}
 }
 
+// ProcessNewRumors implements the function of processing a possibly new-coming rumor
+func (n *node) ProcessNewRumors(origin string) (err error) {
+	noNewFlag := false
+	for !noNewFlag {
+		noNewFlag, err = n.ProcessSpecifiedRumors(origin)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ProcessSpecifiedRumors implements the function of processing a specific rumor from an origin
-func (n *node) ProcessSpecifiedRumors(origin string) (error, bool) {
+func (n *node) ProcessSpecifiedRumors(origin string) (noNewFlag bool, err error) {
 	n.rumorB.mu.Lock()
 	defer n.rumorB.mu.Unlock()
 
-	err, noNewFlag := n.processSingleRumor(origin, n.rumorB.buf[origin])
+	noNewFlag, err = n.processSingleRumor(origin, n.rumorB.buf[origin])
 	if err != nil {
-		return err, false
+		return false, err
 	}
-	return nil, noNewFlag
+	return noNewFlag, nil
 }
 
 // ProcessRumors implements the function of processing initially not processed buffers from the rumor buffer
@@ -64,7 +76,7 @@ func (n *node) ProcessRumors() error {
 	n.rumorB.mu.Lock()
 	defer n.rumorB.mu.Unlock()
 	for origin, rumorDetails := range n.rumorB.buf {
-		if err, _ := n.processSingleRumor(origin, rumorDetails); err != nil {
+		if _, err := n.processSingleRumor(origin, rumorDetails); err != nil {
 			return err
 		}
 	}
@@ -73,22 +85,22 @@ func (n *node) ProcessRumors() error {
 
 // processSingleRumor implements the function of trying to process each rumor, update the buffer with
 // those not processed
-func (n *node) processSingleRumor(origin string, rumorDetails []DetailRumor) (error, bool) {
+func (n *node) processSingleRumor(origin string, rumorDetails []DetailRumor) (bool, error) {
 	i := 0
 	for _, detail := range rumorDetails {
 		isProcessed, err := n.processDetail(origin, detail)
 		if err != nil {
-			return err, false
+			return false, err
 		}
 		if !isProcessed { // If not processed, later update to buffer
 			rumorDetails[i] = detail
 			i++
 		} else {
-			return nil, false
+			return false, nil
 		}
 	}
 	n.rumorB.buf[origin] = rumorDetails[:i]
-	return nil, true
+	return true, nil
 }
 
 // processDetail implements the function of checking if the current rumor is expected, process locally
