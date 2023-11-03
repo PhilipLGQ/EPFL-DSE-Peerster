@@ -50,6 +50,15 @@ func (n *node) ExecRumorsMessage(msg types.Message, pkt transport.Packet) error 
 				return err
 			}
 			n.rumorP.Record(rumor, rumor.Origin, &n.tbl, pkt.Header.RelayedBy)
+
+			noNewFlag := false
+			for !noNewFlag {
+				err, noNewFlag = n.ProcessSpecifiedRumors(rumor.Origin)
+				if err != nil {
+					return err
+				}
+			}
+
 		} else if n.rumorP.CheckSeqNew(rumor.Origin, rumor.Sequence) {
 			n.rumorB.AddRumor(rumor.Origin, DetailRumor{rumor: rumor, pkt: pkt})
 		}

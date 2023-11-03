@@ -47,12 +47,24 @@ func (n *node) ProcessBufferedRumors() error {
 	}
 }
 
+// ProcessSpecifiedRumors implements the function of processing a specific rumor from an origin
+func (n *node) ProcessSpecifiedRumors(origin string) (error, bool) {
+	n.rumorB.mu.Lock()
+	defer n.rumorB.mu.Unlock()
+
+	err, noNewFlag := n.processSingleRumor(origin, n.rumorB.buf[origin])
+	if err != nil {
+		return err, false
+	}
+	return nil, noNewFlag
+}
+
 // ProcessRumors implements the function of processing initially not processed buffers from the rumor buffer
 func (n *node) ProcessRumors() error {
 	n.rumorB.mu.Lock()
 	defer n.rumorB.mu.Unlock()
 	for origin, rumorDetails := range n.rumorB.buf {
-		if err := n.processSingleRumor(origin, rumorDetails); err != nil {
+		if err, _ := n.processSingleRumor(origin, rumorDetails); err != nil {
 			return err
 		}
 	}
@@ -61,20 +73,22 @@ func (n *node) ProcessRumors() error {
 
 // processSingleRumor implements the function of trying to process each rumor, update the buffer with
 // those not processed
-func (n *node) processSingleRumor(origin string, rumorDetails []DetailRumor) error {
+func (n *node) processSingleRumor(origin string, rumorDetails []DetailRumor) (error, bool) {
 	i := 0
 	for _, detail := range rumorDetails {
 		isProcessed, err := n.processDetail(origin, detail)
 		if err != nil {
-			return err
+			return err, false
 		}
 		if !isProcessed { // If not processed, later update to buffer
 			rumorDetails[i] = detail
 			i++
+		} else {
+			return nil, false
 		}
 	}
 	n.rumorB.buf[origin] = rumorDetails[:i]
-	return nil
+	return nil, true
 }
 
 // processDetail implements the function of checking if the current rumor is expected, process locally
@@ -155,6 +169,7 @@ func (n *node) BroadcastRandomNeighbor(tMsg transport.Message) error {
 				return nil
 			case <-time.After(n.conf.AckTimeout): // If timeout resend to another random neighbor
 				preNeighbor = rdmNeighbor
+				n.ackSig.Signal(rpacket.Header.PacketID)
 				continue
 			}
 		} else if n.conf.AckTimeout == 0 { // If AckTimeout is 0, then always wait
