@@ -100,13 +100,15 @@ func (s *Socket) Send(dest string, pkt transport.Packet, timeout time.Duration) 
 		timeout = math.MaxInt64
 	}
 
+	s.outs.Lock()
+	defer s.outs.Unlock()
 	select {
 	case to <- pkt.Copy():
 	case <-time.After(timeout):
 		return transport.TimeoutError(timeout)
 	}
 
-	s.outs.add(pkt)
+	s.outs.addUnsafe(pkt)
 	s.traffic.LogSent(pkt.Header.RelayedBy, dest, pkt)
 
 	return nil
@@ -150,8 +152,11 @@ type packets struct {
 
 func (p *packets) add(pkt transport.Packet) {
 	p.Lock()
-	defer p.Unlock()
+	p.addUnsafe(pkt)
+	p.Unlock()
+}
 
+func (p *packets) addUnsafe(pkt transport.Packet) {
 	p.data = append(p.data, pkt.Copy())
 }
 
