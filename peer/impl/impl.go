@@ -31,14 +31,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	node.rumorB.Initiator()
 	node.catalog.Initiator()
 	node.ntf.Initiator()
-	//node.tlc = node.CreateTLC()
-	//node.tlc = node.NewTLC()
-	node.paxos = NewSafePaxos()
-	node.PaxosID = conf.PaxosID
-	node.PaxosThreshold = conf.PaxosThreshold
-	node.TotalPeers = conf.TotalPeers
-	node.PaxosProposerRetry = conf.PaxosProposerRetry
-	node.myAddr = conf.Socket.GetAddress()
+	node.paxos = InitiatorPaxos()
 	node.tbl = ConcurrentRT{RT: make(map[string]string)}
 	node.tbl.AddEntry(node.conf.Socket.GetAddress(), node.conf.Socket.GetAddress())
 	// Create new context allowing the goroutine to know Stop() call
@@ -89,13 +82,7 @@ type node struct {
 	// Notification manager
 	ntf Notif
 	// Threshold Logical Clocks for multi-Paxos
-	//tlc *TLC
-	paxos              *SafePaxos
-	PaxosID            uint
-	PaxosThreshold     func(uint) int
-	TotalPeers         uint
-	PaxosProposerRetry time.Duration
-	myAddr             string
+	paxos *Paxos
 }
 
 // Start implements peer.Service
@@ -351,87 +338,43 @@ func (n *node) Download(metahash string) ([]byte, error) {
 
 // Tag implements peer.DataSharing
 func (n *node) Tag(name string, mh string) error {
+	// Update name store locally if less than 2 peers involved
 	if n.conf.TotalPeers <= 1 {
 		n.conf.Storage.GetNamingStore().Set(name, []byte(mh))
 		return nil
 	}
 	if n.conf.Storage.GetNamingStore().Get(name) != nil {
-		return xerrors.Errorf("tag error: name already exists in naming store")
+		return xerrors.Errorf("Error Tag(): name already exists in node's name store.")
 	}
-
-	step := n.paxos.GetStep()
-	// 1. if we have proposed, we need to wait consensus and try again
-	if n.paxos.Proposed() {
+	// If 2 or more peers involved
+	currStep := n.paxos.GetCurrStep()
+	// If already proposed for current step, wait for step's consensus and retry
+	if n.paxos.CheckProposed() {
 		for {
-			_, ok := n.paxos.GetConsensus(step)
-			if ok {
+			_, exist := n.paxos.GetStepConsensus(currStep)
+			if exist {
 				return n.Tag(name, mh)
 			}
 		}
 	}
-	// 2. if we have not proposed, we need to propose
-	proposedVal := types.PaxosValue{
-		UniqID:   xid.New().String(),
-		Filename: name,
-		Metahash: mh,
-	}
-	consensus, err := n.Propose(0, proposedVal)
+	// If not proposed for current step, propose and mark proposed
+	pVal := types.PaxosValue{UniqID: xid.New().String(), Filename: name, Metahash: mh}
+	cVal, err := n.ProposeConsensus(pVal, 0)
 	if err != nil {
 		return err
 	}
-	if consensus == proposedVal {
+	if cVal == pVal { // Complete current Tag call if the consensus value is node's proposed value
 		return nil
 	}
+	// Recursively process the Tag call until proposed value becomes consensus or error occurred
 	return n.Tag(name, mh)
 }
 
-// Tag implements peer.DataSharing
-//func (n *node) Tag(name string, mh string) error {
-//	ns := n.conf.Storage.GetNamingStore()
-//	val := types.PaxosValue{
-//		UniqID:   xid.New().String(),
-//		Filename: name,
-//		Metahash: mh,
-//	}
-//	if n.conf.TotalPeers <= 1 {
-//		ns.Set(name, []byte(mh))
-//		return nil
-//	}
-//	//instance, exists := n.initPaxosInstanceState(name, mh)
-//	//if exists {
-//	//	log.Info().Msgf("A Tag process is already in process for name: %v, metahash: %v",
-//	//		name, mh)
-//	//	return nil
-//	//}
-//	return n.tlc.LaunchConsensus(val)
-//	//err := n.tlc.LaunchConsensus(instance, val)
-//	//if err != nil {
-//	//	return err
-//	//}
-//	//return nil
-//}
-
-// Helper function to initialize or retrieve the Paxos state
-//func (n *node) initPaxosInstanceState(name, mh string) (instance string, exists bool) {
-//	// Ensure thread-safe access
-//	n.tlc.mu.Lock()
-//	defer n.tlc.mu.Unlock()
-//
-//	instance = fmt.Sprintf("%s:%s", name, mh)
-//	if _, exists = n.tlc.tInstances[instance]; !exists {
-//		// If not exists, create atomically
-//		n.tlc.NewTLCInstance(instance)
-//		n.tlc.p.NewProposerInstance(instance)
-//		n.tlc.a.NewAcceptorInstance(instance)
-//	}
-//	return instance, exists
-//}
-
 // Resolve implements peer.DataSharing
-func (n *node) Resolve(name string) (metahash string) {
+func (n *node) Resolve(name string) (mh string) {
 	ns := n.conf.Storage.GetNamingStore()
-	metahash = string(ns.Get(name))
-	return metahash
+	mh = string(ns.Get(name))
+	return mh
 }
 
 // GetCatalog implements peer.DataSharing

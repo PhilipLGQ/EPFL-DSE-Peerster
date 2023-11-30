@@ -97,9 +97,6 @@ func (n *node) processSingleRumor(origin string, rumorDetails []DetailRumor) (bo
 			rumorDetails[i] = detail
 			i++
 		}
-		//} else {
-		//	return false, nil
-		//}
 	}
 	n.rumorB.buf[origin] = rumorDetails[:i]
 	return true, nil
