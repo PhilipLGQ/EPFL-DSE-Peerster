@@ -3,6 +3,7 @@ package impl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/peer"
@@ -32,7 +33,7 @@ func (n *node) startGoroutine(description string, fn func() error) {
 // ProcessBufferedRumors implements the function of periodically reprocess received non-ordered rumors
 // stored in rumor buffer
 func (n *node) ProcessBufferedRumors() error {
-	ticker := time.NewTicker(time.Millisecond * 10)
+	ticker := time.NewTicker(time.Millisecond * 20)
 	defer ticker.Stop()
 	for {
 		select {
@@ -95,9 +96,10 @@ func (n *node) processSingleRumor(origin string, rumorDetails []DetailRumor) (bo
 		if !isProcessed { // If not processed, later update to buffer
 			rumorDetails[i] = detail
 			i++
-		} else {
-			return false, nil
 		}
+		//} else {
+		//	return false, nil
+		//}
 	}
 	n.rumorB.buf[origin] = rumorDetails[:i]
 	return true, nil
@@ -160,7 +162,7 @@ func (n *node) BroadcastRandomNeighbor(tMsg transport.Message) error {
 	for {
 		rdmNeighbor, exist := n.tbl.RandomNeighbor([]string{preNeighbor, n.conf.Socket.GetAddress()})
 		if !exist {
-			//fmt.Println("!Exist rdmNeighbor!")
+			fmt.Printf("Node %v, !Exist rdmNeighbor!\n", n.conf.Socket.GetAddress())
 			return nil
 		}
 		rheader := transport.NewHeader(n.conf.Socket.GetAddress(),

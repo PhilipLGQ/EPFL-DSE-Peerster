@@ -2,6 +2,7 @@ package unit
 
 import (
 	"encoding/hex"
+	"fmt"
 	"math/rand"
 	"os"
 	"sync"
@@ -1452,6 +1453,7 @@ func Test_HW3_Tag_Paxos_Catchup(t *testing.T) {
 	require.NoError(t, err)
 
 	time.Sleep(time.Second * 2)
+	fmt.Println("Passed broadcast.")
 
 	// > checking the name and blockchain stores
 
@@ -1474,6 +1476,7 @@ func Test_HW3_Tag_Paxos_Catchup(t *testing.T) {
 	z.ValidateBlockchain(t, blockStore2)
 
 	z.ValidateBlockchain(t, blockStore3)
+	fmt.Println("Reached end of func.")
 }
 
 // 3-19

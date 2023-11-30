@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/transport"
@@ -30,6 +31,14 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	node.rumorB.Initiator()
 	node.catalog.Initiator()
 	node.ntf.Initiator()
+	//node.tlc = node.CreateTLC()
+	//node.tlc = node.NewTLC()
+	node.paxos = NewSafePaxos()
+	node.PaxosID = conf.PaxosID
+	node.PaxosThreshold = conf.PaxosThreshold
+	node.TotalPeers = conf.TotalPeers
+	node.PaxosProposerRetry = conf.PaxosProposerRetry
+	node.myAddr = conf.Socket.GetAddress()
 	node.tbl = ConcurrentRT{RT: make(map[string]string)}
 	node.tbl.AddEntry(node.conf.Socket.GetAddress(), node.conf.Socket.GetAddress())
 	// Create new context allowing the goroutine to know Stop() call
@@ -45,6 +54,11 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	node.conf.MessageRegistry.RegisterMessageCallback(types.DataReplyMessage{}, node.ExecDataReplyMessage)
 	node.conf.MessageRegistry.RegisterMessageCallback(types.SearchRequestMessage{}, node.ExecSearchRequestMessage)
 	node.conf.MessageRegistry.RegisterMessageCallback(types.SearchReplyMessage{}, node.ExecSearchReplyMessage)
+	node.conf.MessageRegistry.RegisterMessageCallback(types.PaxosPrepareMessage{}, node.ExecPaxosPrepareMessage)
+	node.conf.MessageRegistry.RegisterMessageCallback(types.PaxosProposeMessage{}, node.ExecPaxosProposeMessage)
+	node.conf.MessageRegistry.RegisterMessageCallback(types.PaxosAcceptMessage{}, node.ExecPaxosAcceptMessage)
+	node.conf.MessageRegistry.RegisterMessageCallback(types.PaxosPromiseMessage{}, node.ExecPaxosPromiseMessage)
+	node.conf.MessageRegistry.RegisterMessageCallback(types.TLCMessage{}, node.ExecTLCMessage)
 	return &node
 }
 
@@ -74,6 +88,14 @@ type node struct {
 	catalog ConcurrentCatalog
 	// Notification manager
 	ntf Notif
+	// Threshold Logical Clocks for multi-Paxos
+	//tlc *TLC
+	paxos              *SafePaxos
+	PaxosID            uint
+	PaxosThreshold     func(uint) int
+	TotalPeers         uint
+	PaxosProposerRetry time.Duration
+	myAddr             string
 }
 
 // Start implements peer.Service
@@ -329,10 +351,81 @@ func (n *node) Download(metahash string) ([]byte, error) {
 
 // Tag implements peer.DataSharing
 func (n *node) Tag(name string, mh string) error {
-	ns := n.conf.Storage.GetNamingStore()
-	ns.Set(name, []byte(mh))
-	return nil
+	if n.conf.TotalPeers <= 1 {
+		n.conf.Storage.GetNamingStore().Set(name, []byte(mh))
+		return nil
+	}
+	if n.conf.Storage.GetNamingStore().Get(name) != nil {
+		return xerrors.Errorf("tag error: name already exists in naming store")
+	}
+
+	step := n.paxos.GetStep()
+	// 1. if we have proposed, we need to wait consensus and try again
+	if n.paxos.Proposed() {
+		for {
+			_, ok := n.paxos.GetConsensus(step)
+			if ok {
+				return n.Tag(name, mh)
+			}
+		}
+	}
+	// 2. if we have not proposed, we need to propose
+	proposedVal := types.PaxosValue{
+		UniqID:   xid.New().String(),
+		Filename: name,
+		Metahash: mh,
+	}
+	consensus, err := n.Propose(0, proposedVal)
+	if err != nil {
+		return err
+	}
+	if consensus == proposedVal {
+		return nil
+	}
+	return n.Tag(name, mh)
 }
+
+// Tag implements peer.DataSharing
+//func (n *node) Tag(name string, mh string) error {
+//	ns := n.conf.Storage.GetNamingStore()
+//	val := types.PaxosValue{
+//		UniqID:   xid.New().String(),
+//		Filename: name,
+//		Metahash: mh,
+//	}
+//	if n.conf.TotalPeers <= 1 {
+//		ns.Set(name, []byte(mh))
+//		return nil
+//	}
+//	//instance, exists := n.initPaxosInstanceState(name, mh)
+//	//if exists {
+//	//	log.Info().Msgf("A Tag process is already in process for name: %v, metahash: %v",
+//	//		name, mh)
+//	//	return nil
+//	//}
+//	return n.tlc.LaunchConsensus(val)
+//	//err := n.tlc.LaunchConsensus(instance, val)
+//	//if err != nil {
+//	//	return err
+//	//}
+//	//return nil
+//}
+
+// Helper function to initialize or retrieve the Paxos state
+//func (n *node) initPaxosInstanceState(name, mh string) (instance string, exists bool) {
+//	// Ensure thread-safe access
+//	n.tlc.mu.Lock()
+//	defer n.tlc.mu.Unlock()
+//
+//	instance = fmt.Sprintf("%s:%s", name, mh)
+//	if _, exists = n.tlc.tInstances[instance]; !exists {
+//		// If not exists, create atomically
+//		n.tlc.NewTLCInstance(instance)
+//		n.tlc.p.NewProposerInstance(instance)
+//		n.tlc.a.NewAcceptorInstance(instance)
+//	}
+//	return instance, exists
+//}
 
 // Resolve implements peer.DataSharing
 func (n *node) Resolve(name string) (metahash string) {
