@@ -159,7 +159,7 @@ func (n *node) BroadcastRandomNeighbor(tMsg transport.Message) error {
 	for {
 		rdmNeighbor, exist := n.tbl.RandomNeighbor([]string{preNeighbor, n.conf.Socket.GetAddress()})
 		if !exist {
-			fmt.Printf("Node %v, !Exist rdmNeighbor!\n", n.conf.Socket.GetAddress())
+			fmt.Println("!Exist rdmNeighbor!")
 			return nil
 		}
 		rheader := transport.NewHeader(n.conf.Socket.GetAddress(),
