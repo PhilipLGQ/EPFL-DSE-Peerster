@@ -322,6 +322,7 @@ func (n *node) ExecPaxosPrepareMessage(msg types.Message, pkt transport.Packet) 
 	n.paxos.Unlock()
 
 	// Create paxos promise message
+	n.paxos.RLock()
 	pPromMsg := types.PaxosPromiseMessage{
 		Step:          pPrepMsg.Step,
 		ID:            pPrepMsg.ID,
@@ -331,6 +332,7 @@ func (n *node) ExecPaxosPrepareMessage(msg types.Message, pkt transport.Packet) 
 	if (n.paxos.AcceptedValue == types.PaxosValue{}) {
 		pPromMsg.AcceptedValue = nil
 	}
+	n.paxos.RUnlock()
 	transPromise, err := n.conf.MessageRegistry.MarshalMessage(&pPromMsg)
 	if err != nil {
 		return err
