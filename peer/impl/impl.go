@@ -404,7 +404,6 @@ func (n *node) SearchAll(reg regexp.Regexp, budget uint, timeout time.Duration) 
 		Origin:  n.conf.Socket.GetAddress(),
 		Pattern: reg.String(),
 	}
-	//fmt.Println("Executed neighbor search!")
 	rIDs, err := n.SearchNeighbor(srMsg, budget, []string{n.conf.Socket.GetAddress()}, true)
 	if err != nil {
 		return nil, err
@@ -414,7 +413,6 @@ func (n *node) SearchAll(reg regexp.Regexp, budget uint, timeout time.Duration) 
 	case <-n.ctx.Done():
 		return nil, nil
 	case <-time.After(timeout):
-		//fmt.Println("Timeout once!")
 	}
 	for _, rID := range rIDs {
 		closedChan := false

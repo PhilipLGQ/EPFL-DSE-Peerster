@@ -3,7 +3,6 @@ package impl
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/peer"
@@ -159,7 +158,6 @@ func (n *node) BroadcastRandomNeighbor(tMsg transport.Message) error {
 	for {
 		rdmNeighbor, exist := n.tbl.RandomNeighbor([]string{preNeighbor, n.conf.Socket.GetAddress()})
 		if !exist {
-			fmt.Println("!Exist rdmNeighbor!")
 			return nil
 		}
 		rheader := transport.NewHeader(n.conf.Socket.GetAddress(),
