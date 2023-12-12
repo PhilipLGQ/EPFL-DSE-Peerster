@@ -11,10 +11,6 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
-func (n *node) BroadcastError() {
-	//do nothing
-}
-
 func (n *node) BroadcastTLCMessage(step uint, block types.BlockchainBlock) error {
 	tlcMsg := types.TLCMessage{Step: step, Block: block}
 	tMsg, err := n.conf.MessageRegistry.MarshalMessage(tlcMsg)
@@ -82,62 +78,6 @@ func (n *node) TLCForward(step uint, catchUp bool) error {
 		}
 	}
 	return n.TLCForward(step+1, true) // Catchup mode for future steps
-}
-
-func (n *node) ResponsePrepare(prepare *types.PaxosPrepareMessage, val types.PaxosValue, id uint) error {
-	// 1. prepare paxos promise message
-	promise := types.PaxosPromiseMessage{
-		Step:          prepare.Step,
-		ID:            prepare.ID,
-		AcceptedID:    id,
-		AcceptedValue: &val,
-	}
-	if (val == types.PaxosValue{}) {
-		promise.AcceptedValue = nil
-	}
-	transPromise, err := n.conf.MessageRegistry.MarshalMessage(&promise)
-	if err != nil {
-		return err
-	}
-
-	// 2. wrap it in private message
-	private := types.PrivateMessage{
-		Recipients: map[string]struct{}{prepare.Source: {}},
-		Msg:        &transPromise,
-	}
-	transPrivate, err := n.conf.MessageRegistry.MarshalMessage(&private)
-	if err != nil {
-		return err
-	}
-	go func() {
-		err := n.Broadcast(transPrivate)
-		if err != nil {
-			n.BroadcastError()
-		}
-	}()
-	return nil
-}
-
-func (n *node) ResponsePropose(propose *types.PaxosProposeMessage) error {
-	// 1. prepare paxos accept message
-	accept := types.PaxosAcceptMessage{
-		Step:  propose.Step,
-		ID:    propose.ID,
-		Value: propose.Value,
-	}
-
-	// 2. broadcast it
-	transAccept, err := n.conf.MessageRegistry.MarshalMessage(&accept)
-	if err != nil {
-		return err
-	}
-	go func() {
-		err := n.Broadcast(transAccept)
-		if err != nil {
-			n.BroadcastError()
-		}
-	}()
-	return nil
 }
 
 func (n *node) ProposeConsensus(pVal types.PaxosValue, retry uint) (types.PaxosValue, error) {
