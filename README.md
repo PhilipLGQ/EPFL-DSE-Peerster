@@ -1,8 +1,12 @@
-# CS438
+# Peerster
 
-Homework material for the "Decentralized System Engineering" course.
+Reference material for the "Decentralized System Engineering" course (EPFL, 2023-2024 academic year).
 
-Provided by the DEDIS lab at EPFL.
+## Descriptions & Requirements
+Please refer to the pdf files under `/docs` to find detailed project requirements and testing setups. Besides,
+evaluation results of this implementation is recorded in `/docs/eval.txt` for your reference. Please try to find your
+own way to implement and improve your Peerster system, you should always attempt to solve problems by yourself before 
+turning to others.
 
 ## Run the tests
 

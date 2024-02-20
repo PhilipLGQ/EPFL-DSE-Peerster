@@ -1,0 +1,40 @@
+Homework 0
+Linter: 1 / 1
+HW0: 6 / 6
+
+
+Homework 1
+Linter: 1 / 1
+HW0: 6 / 6
+HW1: 5.731 / 6
+Feedback:
+The implementation should not react to messages belonging to another Paxos instance.
+defensive programming: verify that assumptions about input data are not violated
+defensive programming / homework specification: make sure to follow the system's state transitions and that your implementation can resolve any state inconsistencies
+defensive programming / security: your system is vulnerable to a (trivial) attack by peersmake sure to validate network data
+defensive programming: validate network messages before processing thempay attention to application semantics
+
+
+Homework 2
+Linter: 1 / 1
+HW0: 6 / 6
+HW1: 6 / 6
+HW2: 5.885 / 6
+Feedback:
+defensive programming / security: your system is vulnerable to a (trivial) attack by peersmake sure to validate network data
+defensive programming: validate network messages before processing thempay attention to application semantics
+defensive programming: verify that assumptions about input data are not violated
+defensive programming / homework specification: make sure to follow the system's state transitions and that your implementation can resolve any state inconsistencies
+
+
+Homework 3
+Linter: 1 / 1
+HW0: 6 / 6
+HW1: 6 / 6
+HW2: 5.885 / 6
+HW3: 5.933 / 6
+Feedback:
+defensive programming / security: your system is vulnerable to a (trivial) attack by peersmake sure to validate network data
+defensive programming: validate network messages before processing thempay attention to application semantics
+defensive programming: verify that assumptions about input data are not violated
+defensive programming / homework specification: make sure to follow the system's state transitions and that your implementation can resolve any state inconsistencies
